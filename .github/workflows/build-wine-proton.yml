@@ -1,5 +1,5 @@
-# Nombre del Flujo de Trabajo: Compilar Wine (Proton) para un Rootfs tipo Micewine
-name: Build Wine for Micewine Rootfs
+# Nombre del Flujo de Trabajo: Compilar Wine (Proton) x86_64 para un Rootfs tipo Micewine
+name: Build Wine x86_64 for Micewine Rootfs
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ env:
 jobs:
   build_wine:
     runs-on: ubuntu-22.04
-    name: Compilar Wine para Rootfs
+    name: Compilar Wine para Rootfs (x86_64)
 
     steps:
     - name: 1. Configurar el entorno de compilación
@@ -39,35 +39,20 @@ jobs:
         echo "PROTON_BRANCH=${{ github.event.inputs.proton_branch }}" >> $GITHUB_ENV
         echo "OPT_LEVEL=${{ github.event.inputs.optimization_level }}" >> $GITHUB_ENV
 
-    - name: 2. Instalar dependencias de compilación (Corregido)
+    - name: 2. Instalar dependencias de compilación (solo x86_64)
       run: |
         sudo DEBIAN_FRONTEND=noninteractive
         sudo apt-get update
-        sudo dpkg --add-architecture i386
-        sudo apt-get update
-        # Dependencias necesarias para compilar Wine.
-        # - Se cambió libgnutls28-dev por libgnutls-dev para mayor compatibilidad.
-        # - Se añadió libxxf86vm-dev que estaba en el script de referencia.
-        # - Se aseguró que más paquetes sean multilib para una compilación WOW64 correcta.
+        # Dependencias necesarias para una compilación de 64 bits.
+        # Se han eliminado los paquetes i386 para una compilación pura x86_64.
         sudo apt-get install -y --install-recommends \
           build-essential git wget xz-utils perl autoconf flex bison \
           gcc-multilib g++-multilib mingw-w64 gettext \
-          libx11-dev:i386 libx11-dev:amd64 \
-          libxext-dev:i386 libxext-dev:amd64 \
-          libxi-dev:i386 libxi-dev:amd64 \
-          libxrandr-dev:i386 libxrandr-dev:amd64 \
-          libxcursor-dev:i386 libxcursor-dev:amd64 \
-          libxcomposite-dev:i386 libxcomposite-dev:amd64 \
-          libxinerama-dev:i386 libxinerama-dev:amd64 \
-          libxfixes-dev:i386 libxfixes-dev:amd64 \
-          libxxf86vm-dev:i386 libxxf86vm-dev:amd64 \
-          libpulse-dev:i386 libpulse-dev:amd64 \
-          libfreetype6-dev:i386 libfreetype6-dev:amd64 \
-          libgnutls-dev:i386 libgnutls-dev:amd64 \
-          libgstreamer1.0-dev:i386 libgstreamer1.0-dev:amd64 \
-          libgstreamer-plugins-base1.0-dev:i386 libgstreamer-plugins-base1.0-dev:amd64 \
-          libglvnd-dev:i386 libglvnd-dev:amd64 \
-          libvulkan-dev:i386 libvulkan-dev:amd64
+          libx11-dev libxext-dev libxi-dev libxrandr-dev \
+          libxcursor-dev libxcomposite-dev libxinerama-dev \
+          libxfixes-dev libxxf86vm-dev libpulse-dev \
+          libfreetype6-dev libgnutls-dev libgstreamer1.0-dev \
+          libgstreamer-plugins-base1.0-dev libglvnd-dev libvulkan-dev
 
     - name: 3. Descargar el código fuente de Wine/Proton
       run: |
@@ -78,7 +63,7 @@ jobs:
         git checkout ${{ env.PROTON_BRANCH }}
         echo "Clonado y posicionado en la rama ${{ env.PROTON_BRANCH }}"
 
-    - name: 4. Compilar Wine (Proceso WOW64)
+    - name: 4. Compilar Wine (Proceso x86_64)
       run: |
         set -e # Salir si un comando falla
         cd ${{ env.BUILD_DIR }}/wine
@@ -104,15 +89,15 @@ jobs:
         ../wine/configure --enable-win64 --without-x
         make -j$(nproc) tools
 
-        # --- Etapa 2: Compilar Wine WOW64 usando las herramientas ---
-        echo "Iniciando compilación de Wine WOW64..."
+        # --- Etapa 2: Compilar Wine x86_64 usando las herramientas ---
+        echo "Iniciando compilación de Wine x86_64..."
         mkdir -p ../wine-build
         cd ../wine-build
 
-        # Argumentos de configuración basados en el script de Micewine
+        # Argumentos de configuración para una compilación pura de 64 bits
         ../wine/configure \
           --prefix=${{ env.INSTALL_DIR }} \
-          --enable-archs=i386,x86_64 \
+          --enable-win64 \
           --with-wine-tools=../wine-tools \
           --with-x \
           --with-pulse \
@@ -157,7 +142,7 @@ jobs:
 
     - name: 5. Empaquetar la compilación
       run: |
-        PACKAGE_NAME="wine-${{ env.WINE_VERSION }}-micewine-rootfs"
+        PACKAGE_NAME="wine-${{ env.WINE_VERSION }}-micewine-x86_64"
         echo "Creando el paquete: ${PACKAGE_NAME}.tar.xz"
         cd ${{ env.INSTALL_DIR }}
         tar -cJf /tmp/${PACKAGE_NAME}.tar.xz .
@@ -170,13 +155,13 @@ jobs:
         CURRENT_DATE=$(date +%Y%m%d)
         RELEASE_TAG="wine-${{ env.WINE_VERSION }}-${CURRENT_DATE}"
         echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
-        echo "Nombre del archivo: wine-${{ env.WINE_VERSION }}-micewine-rootfs.tar.xz"
+        echo "Nombre del archivo: wine-${{ env.WINE_VERSION }}-micewine-x86_64.tar.xz"
         mv /tmp/wine-*.tar.xz ${{ github.workspace }}/
 
     - name: 7. Subir artefacto de compilación
       uses: actions/upload-artifact@v4
       with:
-        name: wine-build-micewine
+        name: wine-build-micewine-x86_64
         path: ${{ github.workspace }}/wine-*.tar.xz
         retention-days: 5
 
@@ -184,16 +169,16 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ env.RELEASE_TAG }}
-        name: "Wine Build para Micewine Rootfs - ${{ env.WINE_VERSION }}"
+        name: "Wine Build para Micewine Rootfs - ${{ env.WINE_VERSION }} (x86_64)"
         body: |
-          ## Compilación de Wine para Micewine Rootfs
+          ## Compilación de Wine para Micewine Rootfs (x86_64)
 
           Esta es una compilación automatizada de Wine (basada en Proton) para ser usada en un rootfs como el de Micewine.
 
           - **Rama de Proton**: `${{ github.event.inputs.proton_branch }}`
           - **Versión completa**: `${{ env.WINE_VERSION }}`
           - **Nivel de optimización**: `${{ github.event.inputs.optimization_level }}`
-          - **Arquitectura**: WOW64 (soporta aplicaciones de 32 y 64 bits)
+          - **Arquitectura**: x86_64 (solo aplicaciones de 64 bits)
 
           ### Para usar:
           1. Descarga el archivo `.tar.xz`.
@@ -207,4 +192,3 @@ jobs:
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
