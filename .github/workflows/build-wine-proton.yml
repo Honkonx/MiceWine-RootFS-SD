@@ -1,118 +1,125 @@
-# Nombre del Flujo de Trabajo: Compilar Wine (Proton) x86_64 para un Rootfs tipo Micewine
-name: Build Wine x86_64 for Micewine Rootfs
+name: Build Wine WOW64 for Micewine Rootfs
 
 on:
   workflow_dispatch:
     inputs:
-      proton_branch:
-        description: 'Rama o etiqueta de Wine/Proton a compilar'
+      wine_version:
+        description: 'Wine version number (e.g., 9.9, 9.21)'
         required: true
-        default: 'proton_9.0'
+        default: '9.2'
         type: string
-      optimization_level:
-        description: 'Nivel de optimización del compilador'
-        required: true
-        default: 'O2'
-        type: choice
-        options:
-        - O2
-        - O3
-        - Os
 
 permissions:
-  contents: write # Necesario para crear un Release en GitHub
-
-env:
-  BUILD_DIR: "/tmp/build_wine"
-  INSTALL_DIR: "/tmp/wine-install"
+  contents: write # Allow GITHUB_TOKEN to create a Release
 
 jobs:
-  build_wine:
-    runs-on: ubuntu-22.04
-    name: Compilar Wine para Rootfs (x86_64)
+  build:
+    runs-on: ubuntu-22.04 # Using Jammy as a base
 
     steps:
-    - name: 1. Configurar el entorno de compilación
-      run: |
-        echo "Rama de Proton seleccionada: ${{ github.event.inputs.proton_branch }}"
-        echo "Nivel de optimización: ${{ github.event.inputs.optimization_level }}"
-        echo "PROTON_BRANCH=${{ github.event.inputs.proton_branch }}" >> $GITHUB_ENV
-        echo "OPT_LEVEL=${{ github.event.inputs.optimization_level }}" >> $GITHUB_ENV
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: 2. Instalar dependencias de compilación (solo x86_64)
+    - name: Set version variables
       run: |
-        sudo DEBIAN_FRONTEND=noninteractive
+        echo "WINE_VERSION=${{ github.event.inputs.wine_version }}" >> $GITHUB_ENV
+        echo "Building Wine version: ${{ github.event.inputs.wine_version }}"
+
+    - name: Install host dependencies
+      run: |
         sudo apt-get update
-        # Dependencias necesarias para una compilación de 64 bits.
-        # Se han eliminado los paquetes i386 para una compilación pura x86_64.
-        sudo apt-get install -y --install-recommends \
-          build-essential git wget xz-utils perl autoconf flex bison \
-          gcc-multilib g++-multilib mingw-w64 gettext \
-          libx11-dev libxext-dev libxi-dev libxrandr-dev \
-          libxcursor-dev libxcomposite-dev libxinerama-dev \
-          libxfixes-dev libxxf86vm-dev libpulse-dev \
-          libfreetype6-dev libgnutls-dev libgstreamer1.0-dev \
-          libgstreamer-plugins-base1.0-dev libglvnd-dev libvulkan-dev
+        sudo apt-get install -y --no-install-recommends \
+          debootstrap \
+          binfmt-support \
+          qemu-user-static \
+          git \
+          wget \
+          xz-utils
 
-    - name: 3. Descargar el código fuente de Wine/Proton
+    - name: Create Micewine-style rootfs
       run: |
-        mkdir -p ${{ env.BUILD_DIR }}
-        cd ${{ env.BUILD_DIR }}
-        git clone https://github.com/ValveSoftware/wine.git
-        cd wine
-        git checkout ${{ env.PROTON_BRANCH }}
-        echo "Clonado y posicionado en la rama ${{ env.PROTON_BRANCH }}"
+        sudo debootstrap --arch=amd64 jammy ./micewine-rootfs http://archive.ubuntu.com/ubuntu/
 
-    - name: 4. Compilar Wine (Proceso x86_64)
+    - name: Clone Wine source code
       run: |
-        set -e # Salir si un comando falla
-        cd ${{ env.BUILD_DIR }}/wine
+        # We clone it here to copy it into the rootfs later
+        git clone https://github.com/brunodev85/wine-9.2-custom.git
+        # You can checkout a specific tag if needed, e.g.:
+        # cd wine-9.2-custom && git checkout wine-${{ env.WINE_VERSION }}
 
-        # Generar script de configuración
-        ./autogen.sh
+    - name: Prepare build script for rootfs
+      shell: bash
+      run: |
+        # This script will run inside the chroot environment
+        cat <<'EOF' > build_in_chroot.sh
+        #!/bin/bash
+        set -e
 
-        # Configurar flags de optimización
-        case "$OPT_LEVEL" in
-          "O3") OPT_FLAGS="-O3 -pipe -ftree-vectorize -march=x86-64 -msse3 -mfpmath=sse" ;;
-          "Os") OPT_FLAGS="-Os -pipe -march=x86-64 -msse3 -mfpmath=sse" ;;
-          *)    OPT_FLAGS="-O2 -pipe -march=x86-64 -msse3 -mfpmath=sse" ;;
-        esac
+        # --- Environment Setup ---
+        export DEBIAN_FRONTEND=noninteractive
+        export LANG=C.UTF-8
+        export LC_ALL=C.UTF-8
 
-        export CFLAGS="$OPT_FLAGS"
-        export CXXFLAGS="$OPT_FLAGS"
-        export LDFLAGS="-Wl,-O1,--sort-common,--as-needed"
+        # --- Install Dependencies ---
+        echo ">>> Installing build dependencies inside rootfs..."
+        apt-get update
+        apt-get install -y --no-install-recommends \
+          build-essential \
+          gcc-multilib \
+          g++-multilib \
+          mingw-w64 \
+          flex \
+          bison \
+          git \
+          gettext \
+          libgettextpo-dev \
+          locales \
+          # Dependencies from micewine's build.sh
+          libx11-dev \
+          libxext-dev \
+          libxcomposite-dev \
+          libxrender-dev \
+          libxcursor-dev \
+          libxrandr-dev \
+          libxxf86vm-dev \
+          libxinerama-dev \
+          libxfixes-dev \
+          libxi-dev \
+          libvulkan-dev \
+          libgl-dev \
+          libpulse-dev \
+          libfreetype6-dev \
+          libgnutls28-dev \
+          libgstreamer1.0-dev \
+          libgstreamer-plugins-base1.0-dev \
+          gstreamer1.0-plugins-good \
+          gstreamer1.0-plugins-bad \
+          gstreamer1.0-plugins-ugly
 
-        # --- Etapa 1: Compilar las herramientas de Wine (wine-tools) ---
-        echo "Iniciando compilación de wine-tools..."
-        mkdir -p ../wine-tools
-        cd ../wine-tools
-        ../wine/configure --enable-win64 --without-x
-        make -j$(nproc) tools
+        # --- Configure and Build Wine ---
+        echo ">>> Starting Wine WOW64 build..."
+        cd /wine_source
 
-        # --- Etapa 2: Compilar Wine x86_64 usando las herramientas ---
-        echo "Iniciando compilación de Wine x86_64..."
-        mkdir -p ../wine-build
-        cd ../wine-build
+        mkdir -p build-wow64
+        cd build-wow64
 
-        # Argumentos de configuración para una compilación pura de 64 bits
-        ../wine/configure \
-          --prefix=${{ env.INSTALL_DIR }} \
-          --enable-win64 \
-          --with-wine-tools=../wine-tools \
+        # Configure WOW64 Wine for Micewine
+        # Flags are based on your build.sh and the original workflow
+        ../configure \
+          --prefix=/opt/wine \
+          --enable-archs=i386,x86_64 \
+          --enable-nls \
+          --disable-win16 \
+          --disable-winemenubuilder \
+          --disable-tests \
           --with-x \
-          --with-pulse \
           --with-gstreamer \
+          --with-pulse \
+          --with-vulkan \
           --with-opengl \
           --with-gnutls \
-          --with-xinput \
-          --with-xinput2 \
-          --enable-nls \
-          --disable-winemenubuilder \
-          --disable-win16 \
-          --disable-tests \
           --without-oss \
           --without-xshm \
-          --without-xxf86vm \
           --without-osmesa \
           --without-usb \
           --without-sdl \
@@ -129,66 +136,54 @@ jobs:
           --without-udev \
           --without-capi
 
-        # Compilar e instalar
+        # Build Wine
         make -j$(nproc)
+
+        # --- Install Wine ---
+        echo ">>> Installing Wine to /opt/wine..."
         make install
 
-        # Obtener la versión para el nombre del paquete
-        VERSION_WINE=$(cd ${{ env.BUILD_DIR }}/wine && git describe --tags --abbrev=0)
-        COMMIT_HASH=$(cd ${{ env.BUILD_DIR }}/wine && git rev-parse --short HEAD)
-        WINE_FULL_VERSION="${VERSION_WINE}-${COMMIT_HASH}"
-        echo "WINE_VERSION=$WINE_FULL_VERSION" >> $GITHUB_ENV
-        echo "Compilación de Wine $WINE_FULL_VERSION finalizada."
+        echo ">>> Build and installation complete."
+        EOF
 
-    - name: 5. Empaquetar la compilación
+        chmod +x build_in_chroot.sh
+
+    - name: Run build inside rootfs
       run: |
-        PACKAGE_NAME="wine-${{ env.WINE_VERSION }}-micewine-x86_64"
-        echo "Creando el paquete: ${PACKAGE_NAME}.tar.xz"
-        cd ${{ env.INSTALL_DIR }}
-        tar -cJf /tmp/${PACKAGE_NAME}.tar.xz .
-        echo "Paquete creado exitosamente."
-        ls -lh /tmp/*.tar.xz
+        sudo cp -r ./wine-9.2-custom ./micewine-rootfs/wine_source
+        sudo cp ./build_in_chroot.sh ./micewine-rootfs/build_in_chroot.sh
 
-    - name: 6. Preparar artefactos para el Release
-      id: set_release_info
+        # Execute the build script within the chroot
+        sudo chroot ./micewine-rootfs /build_in_chroot.sh
+
+    - name: Package the result
       run: |
-        CURRENT_DATE=$(date +%Y%m%d)
-        RELEASE_TAG="wine-${{ env.WINE_VERSION }}-${CURRENT_DATE}"
-        echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
-        echo "Nombre del archivo: wine-${{ env.WINE_VERSION }}-micewine-x86_64.tar.xz"
-        mv /tmp/wine-*.tar.xz ${{ github.workspace }}/
+        mkdir -p wine-package
+        # Copy the final installation from the rootfs to the host for packaging
+        sudo cp -r ./micewine-rootfs/opt/wine ./wine-package/
+        
+        # Package into a tarball
+        tar -czf wine-${{ env.WINE_VERSION }}-wow64-micewine-rootfs.tar.gz -C wine-package .
+        echo "Packaging complete:"
+        ls -lh wine-*.tar.gz
 
-    - name: 7. Subir artefacto de compilación
+    - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: wine-build-micewine-x86_64
-        path: ${{ github.workspace }}/wine-*.tar.xz
-        retention-days: 5
+        name: wine-${{ env.WINE_VERSION }}-wow64-micewine-rootfs
+        path: wine-*.tar.gz
 
-    - name: 8. Crear Release en GitHub
+    - name: Release to GitHub
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ env.RELEASE_TAG }}
-        name: "Wine Build para Micewine Rootfs - ${{ env.WINE_VERSION }} (x86_64)"
+        tag_name: ${{ env.WINE_VERSION }}-wow64-micewine
+        name: Wine ${{ env.WINE_VERSION }} (WOW64 for Micewine Rootfs)
         body: |
-          ## Compilación de Wine para Micewine Rootfs (x86_64)
-
-          Esta es una compilación automatizada de Wine (basada en Proton) para ser usada en un rootfs como el de Micewine.
-
-          - **Rama de Proton**: `${{ github.event.inputs.proton_branch }}`
-          - **Versión completa**: `${{ env.WINE_VERSION }}`
-          - **Nivel de optimización**: `${{ github.event.inputs.optimization_level }}`
-          - **Arquitectura**: x86_64 (solo aplicaciones de 64 bits)
-
-          ### Para usar:
-          1. Descarga el archivo `.tar.xz`.
-          2. Extráelo en la raíz de tu sistema de archivos (o en el prefijo deseado).
-             \`\`\`bash
-             sudo tar -xJf wine-*.tar.xz -C /
-             \`\`\`
-        files: |
-          ${{ github.workspace }}/wine-*.tar.xz
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Wine ${{ env.WINE_VERSION }} - WOW64 for Micewine-style Rootfs
+          
+          - **Wine Version**: ${{ env.WINE_VERSION }}
+          - **Architecture**: WOW64 (supports 32-bit and 64-bit Windows apps)
+          - **Target**: Micewine Rootfs
+          - **Graphics API**: Vulkan enabled
+          - **Multimedia**: GStreamer enabled
+        files: wine-*.tar.gz
