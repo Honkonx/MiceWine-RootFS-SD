@@ -40,6 +40,19 @@ jobs:
       run: |
         sudo debootstrap --arch=amd64 jammy ./micewine-rootfs http://archive.ubuntu.com/ubuntu/
 
+    - name: Configure rootfs for build
+      run: |
+        # Configure apt sources to include universe, multiverse, etc.
+        cat <<EOF | sudo tee ./micewine-rootfs/etc/apt/sources.list
+        deb http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
+        deb http://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
+        deb http://archive.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
+        deb http://archive.ubuntu.com/ubuntu/ jammy-backports main restricted universe multiverse
+        EOF
+        
+        # Copy DNS configuration to allow package downloads inside chroot
+        sudo cp /etc/resolv.conf ./micewine-rootfs/etc/resolv.conf
+
     - name: Clone Wine source code
       run: |
         # We clone it here to copy it into the rootfs later
@@ -53,7 +66,7 @@ jobs:
         # This script will run inside the chroot environment
         cat <<'EOF' > build_in_chroot.sh
         #!/bin/bash
-        set -e
+        set -ex # Exit on error and print commands
 
         # --- Environment Setup ---
         export DEBIAN_FRONTEND=noninteractive
@@ -86,7 +99,7 @@ jobs:
           libxfixes-dev \
           libxi-dev \
           libvulkan-dev \
-          libgl-dev \
+          libgl1-mesa-dev \
           libpulse-dev \
           libfreetype6-dev \
           libgnutls28-dev \
@@ -187,3 +200,4 @@ jobs:
           - **Graphics API**: Vulkan enabled
           - **Multimedia**: GStreamer enabled
         files: wine-*.tar.gz
+
