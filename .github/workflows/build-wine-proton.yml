@@ -78,6 +78,7 @@ jobs:
         apt-get update
         apt-get install -y --no-install-recommends \
           build-essential \
+          coreutils \
           gcc-multilib \
           g++-multilib \
           mingw-w64 \
@@ -166,8 +167,19 @@ jobs:
         sudo cp -r ./wine-9.2-custom ./micewine-rootfs/wine_source
         sudo cp ./build_in_chroot.sh ./micewine-rootfs/build_in_chroot.sh
 
-        # Execute the build script within the chroot
+        # Mount necessary virtual filesystems for the chroot environment to work correctly
+        sudo mount -t proc proc ./micewine-rootfs/proc
+        sudo mount -t sysfs sys ./micewine-rootfs/sys
+        sudo mount -o bind /dev ./micewine-rootfs/dev
+        
+        # Execute the build script within the fully prepared chroot
         sudo chroot ./micewine-rootfs /build_in_chroot.sh
+        
+        # Clean up by unmounting the filesystems
+        # Using -l for lazy unmount to avoid "target is busy" issues
+        sudo umount -l ./micewine-rootfs/dev
+        sudo umount -l ./micewine-rootfs/sys
+        sudo umount -l ./micewine-rootfs/proc
 
     - name: Package the result
       run: |
