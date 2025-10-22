@@ -1,11 +1,11 @@
 PKG_VER="9.0-esync-xinput-dinput"
 PKG_CATEGORY="Wine"
-PKG_PRETTY_NAME="Wine ($PKG_VER)"
+PKG_PRETTY_NAME="Wine-proton ($PKG_VER)"
 
 BLACKLIST_ARCH=aarch64
 
-GIT_URL=https://github.com/cjxyz/wine
-GIT_COMMIT=proton_9.0
+GIT_URL=https://github.com/KreitinnSoftware/proton-wine
+GIT_COMMIT=5a774a4
 HOST_BUILD_CONFIGURE_ARGS="--enable-win64 --without-x"
 HOST_BUILD_FOLDER="$INIT_DIR/workdir/$package/wine-tools"
 HOST_BUILD_MAKE="make -j $(nproc) __tooldeps__ nls/all"
